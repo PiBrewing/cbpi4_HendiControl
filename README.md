@@ -1,0 +1,3 @@
+# craftbeerpi4-plugin-template
+
+sudo pip3 install /.....
