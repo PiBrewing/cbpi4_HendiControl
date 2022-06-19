@@ -68,8 +68,8 @@ class PID(object):
         self.pi = self.k0 * ek  # + Kc*Ts/Ti * e[k]
         self.pd = self.k1 * (2.0 * self.xk_1 - xk - self.xk_2)
         self.yk += self.pp + self.pi + self.pd
-        print ("------------")
-        print (self.yk, self.pp, self.pi, self.pd)
+        print("------------")
+        print(self.yk, self.pp, self.pi, self.pd)
 
         self.xk_2 = self.xk_1  # PV[k-2] = PV[k-1]
         self.xk_1 = xk    # PV[k-1] = PV[k]
@@ -82,6 +82,59 @@ class PID(object):
 
         return round(self.yk, 1)
 
+
+@parameters([Property.Number(label = "P", configurable = True, description="P Value of PID"),
+             Property.Number(label = "I", configurable = True, description="I Value of PID"),
+             Property.Number(label = "D", configurable = True, description="D Value of PID"),
+             Property.Number(label = "Max_Output", configurable = True, description="Power before Boil threshold is reached.")])
+             
+class PIDHendi(CBPiKettleLogic):
+    async def on_stop(self):
+        await self.actor_off(self.heater)
+        pass
+
+
+    async def run(self):
+        try:
+            sampleTime = 5
+          
+            p = float(self.props.get("P", 40))
+            i = float(self.props.get("I", 140))
+            d = float(self.props.get("D", 0))
+            maxout = int(self.props.get("Max_Output", 100))
+
+            self.kettle = self.get_kettle(self.id)
+            self.heater = self.kettle.heater
+            self.heater_actor = self.cbpi.actor.find_by_id(self.heater)
+                       
+            await self.actor_on(self.heater, maxout)
+
+            pid = PID(sampleTime, p, i, d, maxout)
+
+            while self.running == True:
+                sensor_value = float(self.get_sensor_value(self.kettle.sensor).get("value",999))
+                target_temp = int(self.get_kettle_target_temp(self.id))
+                heat_percent = pid.calc(sensor_value, target_temp)
+                if heat_percent == 0:
+                    await self.actor_set_power(self.heater, 0)
+                    await self.actor_off(self.heater)
+                    logging.info("PIDHendi OFF")
+                else:
+                    await self.actor_set_power(self.heater,heat_percent)
+                    await self.actor_on(self.heater, heat_percent)
+
+                    logging.info("PIDHendi calling heater_on(power={})".format(heat_percent))
+
+                await asyncio.sleep(sampleTime)
+
+        except asyncio.CancelledError as e:
+            pass
+        except Exception as e:
+            logging.error("PIDHendi {}".format(e))
+        finally:
+            self.running = False
+            await self.actor_set_power(self.heater,0)
+            await self.actor_off(self.heater)
 
 @parameters([Property.Select(label="power_pin", options=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 
                                                         16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27], description="Power control GPIO"),
@@ -108,7 +161,6 @@ class HendiControl(CBPiActor):
         self.state = False
         self.power = 0
         self.pwm = None
-        self.stopped = True
         self.power_pin=self.props.get("power_pin",0)
         self.onoff_pin=self.props.get("onoff_pin",0)
         self.Pmax=self.props.get("Pmax",100)       
@@ -121,7 +173,6 @@ class HendiControl(CBPiActor):
         self.power =  int(self.Pmax)
 
     async def on(self, power=None):
-        self.stopped = False
         if self.pwm is None:
             self.pwm = GPIO.PWM(int(self.power_pin), int(self.freq))
             self.pwm.start(int(self.power))
@@ -137,9 +188,10 @@ class HendiControl(CBPiActor):
 
     async def set_power(self, power):
         self.power = min(int(power), int(self.Pmax))
-        logging.info("Set power {}".format(self.power))
-        if(0 == self.power):
+        if(self.power == 0):
             GPIO.output(int(self.onoff_pin), 0)
+            if self.pwm:
+                self.pwm.ChangeDutyCycle(0)
         if self.pwm:
             try:
                 GPIO.output(int(self.onoff_pin), 1)
@@ -147,16 +199,21 @@ class HendiControl(CBPiActor):
                 pass
             self.pwm.ChangeDutyCycle(self.power)
         await self.cbpi.actor.actor_update(self.id,self.power)
+        logging.info("Set power {}".format(self.power))
         pass
 
 
     async def off(self):
-        logging.info("Hendi off")
-        self.stopped = True
-        self.pwm.ChangeDutyCycle(0)
-        #self.pwm.stop()
+        try:
+            self.pwm.ChangeDutyCycle(0)
+            logging.info("Set Duty Cycle to 0")
+            #self.pwm.stop()
+        except:
+            logging.info("No PWM instance for hendi actor to stop")
+            pass
         GPIO.output(int(self.onoff_pin), 0)
         self.state = False
+        logging.info("Hendi off")
  
     def get_state(self):
         return self.state
@@ -168,4 +225,5 @@ class HendiControl(CBPiActor):
 
 def setup(cbpi):
     cbpi.plugin.register("HendiControl", HendiControl)
+    cbpi.plugin.register("PIDHendi", PIDHendi)
     pass

@@ -1,7 +1,7 @@
 from setuptools import setup
 
 setup(name='cbpi4_HendiControl',
-      version='0.0.1',
+      version='0.0.2',
       description='CraftBeerPi Plugin',
       author='',
       author_email='',
