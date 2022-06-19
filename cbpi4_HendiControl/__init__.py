@@ -90,7 +90,9 @@ class PID(object):
              
 class PIDHendi(CBPiKettleLogic):
     async def on_stop(self):
+        await self.actor_set_power(self.heater,0)
         await self.actor_off(self.heater)
+        logging.info("PIDHendi Logic stopped")
         pass
 
 
@@ -128,13 +130,19 @@ class PIDHendi(CBPiKettleLogic):
                 await asyncio.sleep(sampleTime)
 
         except asyncio.CancelledError as e:
+            await self.actor_set_power(self.heater,0)
+            await self.actor_off(self.heater)
+            logging.info("PIDHendi Logic cancelled")
             pass
         except Exception as e:
+            await self.actor_set_power(self.heater,0)
+            await self.actor_off(self.heater)
             logging.error("PIDHendi {}".format(e))
         finally:
             self.running = False
             await self.actor_set_power(self.heater,0)
             await self.actor_off(self.heater)
+            logging.info("PIDHendi Logic finished")
 
 @parameters([Property.Select(label="power_pin", options=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 
                                                         16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27], description="Power control GPIO"),
